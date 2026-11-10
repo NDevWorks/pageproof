@@ -32,28 +32,36 @@ export async function embed(texts: string[]): Promise<number[][]> {
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
-// Ask the chosen model (OpenAI or Claude) to answer using only the given context.
-export async function generateAnswer(
+// Stream the answer piece by piece from the chosen provider (OpenAI or Claude).
+export async function* streamAnswer(
   system: string,
-  messages: ChatTurn[]
-): Promise<string> {
+  messages: ChatTurn[],
+  signal?: AbortSignal
+): AsyncGenerator<string> {
   if (MODELS.provider === "anthropic") {
-    const res = await getAnthropic().messages.create({
-      model: MODELS.anthropicChat,
-      max_tokens: 1024,
-      system,
-      messages,
-    });
-    return res.content
-      .map((block) => (block.type === "text" ? block.text : ""))
-      .join("")
-      .trim();
+    const stream = getAnthropic().messages.stream(
+      { model: MODELS.anthropicChat, max_tokens: 1024, system, messages },
+      { signal }
+    );
+    for await (const event of stream) {
+      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+        yield event.delta.text;
+      }
+    }
+    return;
   }
 
-  const res = await getOpenAI().chat.completions.create({
-    model: MODELS.openaiChat,
-    temperature: 0.2,
-    messages: [{ role: "system", content: system }, ...messages],
-  });
-  return res.choices[0]?.message?.content?.trim() ?? "";
+  const stream = await getOpenAI().chat.completions.create(
+    {
+      model: MODELS.openaiChat,
+      temperature: 0.2,
+      stream: true,
+      messages: [{ role: "system", content: system }, ...messages],
+    },
+    { signal }
+  );
+  for await (const chunk of stream) {
+    const text = chunk.choices[0]?.delta?.content;
+    if (text) yield text;
+  }
 }

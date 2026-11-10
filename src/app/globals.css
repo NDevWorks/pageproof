@@ -1,40 +1,213 @@
 @import "tailwindcss";
 
+/* Design tokens — "evidence first": quiet ink-on-paper interface, one loud highlighter */
 :root {
-  --background: #f7f7f5;
+  --paper: #f5f6fa;
   --surface: #ffffff;
-  --foreground: #1c1c1a;
-  --muted: #6b6b66;
-  --border: #e4e4df;
-  --accent: #2f5d50;
-  --accent-soft: #e6efeb;
+  --sunken: #eceef5;
+  --ink: #1b1e2c;
+  --slate: #5d6378;
+  --rule: #dcdfe9;
+  --action: #3a3ed6;
+  --action-ink: #ffffff;
+  --action-soft: #e7e8fc;
+  --mark: #ffe45c;
+  --mark-ink: #1b1e2c;
+  --danger: #c0352b;
+  --danger-soft: #fdecea;
+  --ok: #1f7a4d;
+  --shadow: 0 1px 2px rgb(27 30 44 / 0.06), 0 8px 24px rgb(27 30 44 / 0.08);
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #121412;
-    --surface: #1a1d1b;
-    --foreground: #ecebe6;
-    --muted: #9a9a93;
-    --border: #2c302d;
-    --accent: #7fc4ab;
-    --accent-soft: #1f2e28;
+    --paper: #12141c;
+    --surface: #1a1d28;
+    --sunken: #222634;
+    --ink: #e8e9f0;
+    --slate: #9da2b6;
+    --rule: #2c3040;
+    --action: #8e92ff;
+    --action-ink: #12141c;
+    --action-soft: #262a4a;
+    --mark: #e8c93a;
+    --mark-ink: #12141c;
+    --danger: #ff8a7f;
+    --danger-soft: #3a1f1e;
+    --ok: #6fd3a0;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.35);
+    color-scheme: dark;
   }
 }
 
 @theme inline {
-  --color-background: var(--background);
+  --color-paper: var(--paper);
   --color-surface: var(--surface);
-  --color-foreground: var(--foreground);
-  --color-muted: var(--muted);
-  --color-border: var(--border);
-  --color-accent: var(--accent);
-  --color-accent-soft: var(--accent-soft);
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --color-sunken: var(--sunken);
+  --color-ink: var(--ink);
+  --color-slate: var(--slate);
+  --color-rule: var(--rule);
+  --color-action: var(--action);
+  --color-action-ink: var(--action-ink);
+  --color-action-soft: var(--action-soft);
+  --color-mark: var(--mark);
+  --color-mark-ink: var(--mark-ink);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-ok: var(--ok);
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "IBM Plex Serif", ui-serif, Georgia, serif;
+  --shadow-lift: var(--shadow);
+}
+
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--paper);
+  color: var(--ink);
   font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Visible keyboard focus everywhere */
+/* (the question box shows focus on its whole frame instead) */
+:focus-visible:not(textarea) {
+  outline: 2px solid var(--action);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Highlighter mark: the one loud element in the interface */
+.mark {
+  background: linear-gradient(
+    100deg,
+    transparent 0.15em,
+    var(--mark) 0.15em,
+    var(--mark) calc(100% - 0.1em),
+    transparent calc(100% - 0.1em)
+  );
+  color: var(--mark-ink);
+  border-radius: 0.2em;
+  padding: 0 0.15em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* Tighter highlight for words inside running text */
+mark.mark {
+  padding: 0 0.04em;
+  border-radius: 0.15em;
+  background: var(--mark);
+}
+
+/* Answer typography */
+.answer > * + * {
+  margin-top: 0.75em;
+}
+.answer ul,
+.answer ol {
+  padding-left: 1.25em;
+}
+.answer ul {
+  list-style: disc;
+}
+.answer ol {
+  list-style: decimal;
+}
+.answer li + li {
+  margin-top: 0.3em;
+}
+.answer strong {
+  font-weight: 600;
+}
+.answer h1,
+.answer h2,
+.answer h3 {
+  font-weight: 600;
+  font-size: 1em;
+}
+.answer table {
+  border-collapse: collapse;
+  font-size: 0.93em;
+}
+.answer th,
+.answer td {
+  border: 1px solid var(--rule);
+  padding: 0.35em 0.6em;
+  text-align: left;
+}
+.answer code {
+  background: var(--sunken);
+  border-radius: 4px;
+  padding: 0.1em 0.3em;
+  font-size: 0.9em;
+}
+
+/* Blinking caret while an answer streams */
+.caret::after {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--action);
+  animation: blink 1s steps(2, start) infinite;
+}
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* Indeterminate progress bar for indexing */
+.progress {
+  position: relative;
+  overflow: hidden;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--sunken);
+}
+.progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: var(--action);
+  border-radius: 3px;
+  animation: slide 1.2s ease-in-out infinite;
+}
+@keyframes slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+.sheet-enter {
+  animation: sheet 180ms ease-out;
+}
+@keyframes sheet {
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -17,7 +17,11 @@ export type Source = {
   similarity: number;
 };
 
-export type ChatResponse = {
-  answer: string;
-  sources: Source[];
-};
+// The chat endpoint streams newline-delimited JSON events in this order:
+// status → sources → delta (many) → done. "error" can arrive at any point.
+export type ChatEvent =
+  | { type: "status"; stage: "searching" | "writing" }
+  | { type: "sources"; sources: Source[] }
+  | { type: "delta"; text: string }
+  | { type: "done" }
+  | { type: "error"; message: string };

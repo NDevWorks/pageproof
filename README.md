@@ -1,8 +1,8 @@
 # AI Document Chat
 
-Upload PDFs and ask questions in plain language. Every answer comes with **clickable sources** showing the exact document and page it came from, so you can trust what you read.
+Upload PDFs and ask questions in plain language. Every answer is **highlighted with its sources**. Tap a number to read the exact passage and page it came from, so you never have to take the answer on trust.
 
-![AI Document Chat screenshot](docs/screenshot.png)
+![AI Document Chat: answer with highlighted citations and the evidence panel](docs/screenshot.png)
 
 > **Live demo:** _coming soon_
 
@@ -19,14 +19,36 @@ The model is told to answer **only** from your documents. If the answer isn't th
 
 ## Features
 
-- 📄 Upload multiple PDFs (up to 10 MB each)
-- 💬 Ask questions and follow-ups in a chat interface
-- 🔎 Inline citations like `[1]`. Click one to see the exact passage and page
-- ✅ Search all documents or only the ones you select
-- 🔁 Choose the AI provider: **OpenAI** or **Anthropic Claude**
-- 📱 Works on desktop and mobile, with light and dark mode
+**Answers you can check**
+- Highlighted citation numbers in every answer. Tap one to open the **evidence panel**
+- Evidence panel shows each source passage, its page, and match strength, with the question's key words highlighted
+- The model answers only from your documents, and says so when the answer isn't there
 
-![Source viewer](docs/source-viewer.png)
+**A fast, comfortable chat**
+- Answers **stream in word by word**, with clear status ("Searching your documents", "Generating an answer")
+- **Stop** an answer mid-way, **Ask again**, or **Copy** it
+- Answers are formatted (lists, bold figures, tables)
+- Follow-up questions understand the conversation so far
+- Conversation is saved in the browser and survives a refresh; **New chat** starts fresh
+
+**Easy document handling**
+- **Drag and drop PDFs anywhere** on the page, or pick several at once
+- Live indexing progress for each file, and clear errors you can dismiss
+- **Try a sample** button loads a demo rental agreement in one click
+- Tick documents to limit answers to them; filter a long library; delete with confirmation
+
+**Built properly**
+- Works on phone, tablet and desktop (library drawer and evidence sheet on mobile)
+- Automatic light and dark mode
+- Keyboard friendly: <kbd>/</kbd> to focus the question box, <kbd>Enter</kbd> to send, <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line, <kbd>Esc</kbd> to close panels
+- Screen-reader labels, visible focus, and reduced-motion support
+- Choose the AI provider: **OpenAI** or **Anthropic Claude**
+
+| First visit | Phone | Evidence on phone |
+|---|---|---|
+| <img src="docs/onboarding.png" alt="First-visit screen with sample document" width="420"> | <img src="docs/mobile-answer.png" alt="Answer on a phone" width="200"> | <img src="docs/mobile-evidence.png" alt="Evidence sheet on a phone" width="200"> |
+
+![Dark mode](docs/dark.png)
 
 ## Tech stack
 
@@ -57,16 +79,24 @@ This pattern is called **RAG (Retrieval-Augmented Generation)**.
 ```
 src/
   app/
-    page.tsx                  Chat UI
+    page.tsx                  App shell: uploads, chat state, layout
     api/documents/route.ts    Upload + list documents
     api/documents/[id]/       Delete a document
-    api/chat/route.ts         Answer questions with sources
+    api/chat/route.ts         Streams answers with sources (NDJSON)
+  components/
+    Library.tsx               Document list, upload progress, filter
+    Conversation.tsx          Messages, markdown, citations, actions
+    Composer.tsx              Question box with stop/send
+    EvidencePanel.tsx         Source passages with highlighted terms
+    Toasts.tsx                Notifications
   lib/
-    ai.ts                     Embeddings + OpenAI/Claude answers
+    ai.ts                     Embeddings + streaming OpenAI/Claude answers
+    client.ts                 Browser API calls, stream reader, saved chat
     chunk.ts                  Text splitting
     pdf.ts                    PDF text extraction
     supabase.ts               Database client (server only)
     config.ts                 Limits and model settings
+public/sample/                Demo rental agreement (fictional)
 supabase/schema.sql           Database tables and search function
 ```
 

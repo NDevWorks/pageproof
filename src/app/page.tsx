@@ -1,66 +1,143 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatResponse, DocumentInfo, Source } from "@/lib/types";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  citedNumbers,
+  deleteDocument,
+  fetchDocuments,
+  keyTerms,
+  loadConversation,
+  saveConversation,
+  streamChat,
+  uid,
+  uploadDocument,
+  type AssistantMessage,
+  type Message,
+} from "@/lib/client";
+import type { DocumentInfo } from "@/lib/types";
+import { LIMITS } from "@/lib/config";
+import { Library, type UploadItem } from "@/components/Library";
+import { Conversation } from "@/components/Conversation";
+import { Composer } from "@/components/Composer";
+import { EvidencePanel } from "@/components/EvidencePanel";
+import { Toasts, type Toast } from "@/components/Toasts";
+import { ArrowDownIcon, CloseIcon, MenuIcon, PlusIcon, UploadIcon } from "@/components/icons";
 
-type Message =
-  | { role: "user"; content: string }
-  | { role: "assistant"; content: string; sources: Source[] };
+const SAMPLE_URL = "/sample/sample-rental-agreement.pdf";
+const SAMPLE_NAME = "Sample Rental Agreement.pdf";
+
+const SUGGESTIONS = [
+  "Summarise the key points",
+  "What dates and deadlines are mentioned?",
+  "What are the payment terms?",
+  "What happens if the agreement is ended early?",
+];
 
 export default function Home() {
+  // Documents
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
+  const [docsLoading, setDocsLoading] = useState(true);
+  const [docsError, setDocsError] = useState<string | null>(null);
+  const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Conversation
   const [messages, setMessages] = useState<Message[]>([]);
   const [question, setQuestion] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [thinking, setThinking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [openSource, setOpenSource] = useState<Source | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const bottom = useRef<HTMLDivElement>(null);
+  const [streaming, setStreaming] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
 
-  const loadDocuments = useCallback(async () => {
-    const res = await fetch("/api/documents");
-    const data = await res.json();
-    if (res.ok) setDocuments(data.documents);
-    else setError(data.error);
+  // UI
+  const [evidence, setEvidence] = useState<{ messageId: string; n: number } | null>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const fileInput = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+
+  // ---------- Toasts ----------
+  const toast = useCallback((kind: Toast["kind"], text: string) => {
+    const id = uid();
+    setToasts((t) => [...t.slice(-2), { id, kind, text }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4500);
+  }, []);
+
+  // ---------- Documents ----------
+  const loadDocs = useCallback(async () => {
+    setDocsLoading(true);
+    setDocsError(null);
+    try {
+      setDocuments(await fetchDocuments());
+    } catch (err) {
+      setDocsError(err instanceof Error ? err.message : "Couldn't load documents.");
+    } finally {
+      setDocsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadDocuments();
-  }, [loadDocuments]);
+    loadDocs();
+    setMessages(loadConversation());
+  }, [loadDocs]);
 
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, thinking]);
+  const addFiles = useCallback(
+    async (files: File[]) => {
+      const pdfs = files.filter((f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name));
+      const skipped = files.length - pdfs.length;
+      if (skipped > 0) toast("error", `${skipped} file${skipped > 1 ? "s were" : " was"} skipped. Only PDFs can be added.`);
+      if (pdfs.length === 0) return;
 
-  async function upload(files: FileList | null) {
-    if (!files?.length) return;
-    setUploading(true);
-    setError(null);
-    for (const file of Array.from(files)) {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/api/documents", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) setError(`${file.name}: ${data.error}`);
+      const items = pdfs.map((f) => ({ id: uid(), name: f.name, state: "indexing" as const }));
+      setUploads((u) => [...u, ...items]);
+      setLibraryOpen(true);
+
+      for (let i = 0; i < pdfs.length; i++) {
+        const item = items[i];
+        try {
+          const doc = await uploadDocument(pdfs[i]);
+          setUploads((u) => u.filter((x) => x.id !== item.id));
+          setDocuments((d) => [doc, ...d.filter((x) => x.id !== doc.id)]);
+          toast("ok", `${doc.name} is ready. ${doc.page_count} pages indexed.`);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Upload failed.";
+          setUploads((u) => u.map((x) => (x.id === item.id ? { ...x, state: "failed", error: message } : x)));
+        }
+      }
+      composerRef.current?.focus();
+    },
+    [toast]
+  );
+
+  async function addSample() {
+    try {
+      const res = await fetch(SAMPLE_URL);
+      if (!res.ok) throw new Error();
+      const blob = await res.blob();
+      await addFiles([new File([blob], SAMPLE_NAME, { type: "application/pdf" })]);
+    } catch {
+      toast("error", "The sample document couldn't be loaded.");
     }
-    await loadDocuments();
-    setUploading(false);
-    if (fileInput.current) fileInput.current.value = "";
   }
 
-  async function remove(id: string) {
-    if (!confirm("Delete this document?")) return;
-    const res = await fetch(`/api/documents/${id}`, { method: "DELETE" });
-    if (!res.ok) setError((await res.json()).error);
+  async function removeDocument(doc: DocumentInfo) {
+    const before = documents;
+    setDocuments((d) => d.filter((x) => x.id !== doc.id));
     setSelected((s) => {
       const next = new Set(s);
-      next.delete(id);
+      next.delete(doc.id);
       return next;
     });
-    loadDocuments();
+    try {
+      await deleteDocument(doc.id);
+      toast("ok", `${doc.name} deleted.`);
+    } catch (err) {
+      setDocuments(before);
+      toast("error", err instanceof Error ? err.message : "Couldn't delete the document.");
+    }
   }
 
   function toggle(id: string) {
@@ -72,249 +149,433 @@ export default function Home() {
     });
   }
 
-  async function ask(e: React.FormEvent) {
-    e.preventDefault();
-    const q = question.trim();
-    if (!q || thinking) return;
+  // ---------- Asking ----------
+  const updateAssistant = useCallback((id: string, patch: (m: AssistantMessage) => AssistantMessage) => {
+    setMessages((all) => all.map((m) => (m.id === id && m.role === "assistant" ? patch(m) : m)));
+  }, []);
 
-    const history = messages.map((m) => ({ role: m.role, content: m.content }));
-    setMessages((m) => [...m, { role: "user", content: q }]);
-    setQuestion("");
-    setThinking(true);
-    setError(null);
+  const ask = useCallback(
+    async (text: string, base: Message[]) => {
+      const q = text.trim();
+      if (!q || streaming) return;
 
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q, history, documentIds: [...selected] }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      const { answer, sources } = data as ChatResponse;
-      setMessages((m) => [...m, { role: "assistant", content: answer, sources }]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
-    } finally {
-      setThinking(false);
-    }
+      const userMsg: Message = { id: uid(), role: "user", content: q };
+      const assistant: AssistantMessage = {
+        id: uid(),
+        role: "assistant",
+        content: "",
+        sources: [],
+        status: "searching",
+      };
+      const history = base
+        .filter((m) => m.role === "user" || (m.role === "assistant" && m.status === "done"))
+        .map((m) => ({ role: m.role, content: m.content }));
+
+      setMessages([...base, userMsg, assistant]);
+      setQuestion("");
+      setStreaming(true);
+      setAtBottom(true);
+      setEvidence(null);
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      // Buffer streamed text and paint once per frame for smooth rendering
+      let buffer = "";
+      let frame = 0;
+      const flush = () => {
+        frame = 0;
+        if (!buffer) return;
+        const chunk = buffer;
+        buffer = "";
+        updateAssistant(assistant.id, (m) => ({ ...m, content: m.content + chunk }));
+      };
+
+      try {
+        await streamChat(
+          { question: q, history, documentIds: [...selected] },
+          (event) => {
+            if (event.type === "status") updateAssistant(assistant.id, (m) => ({ ...m, status: event.stage }));
+            else if (event.type === "sources") updateAssistant(assistant.id, (m) => ({ ...m, sources: event.sources }));
+            else if (event.type === "delta") {
+              buffer += event.text;
+              if (!frame) frame = requestAnimationFrame(flush);
+            } else if (event.type === "error") throw new Error(event.message);
+            else if (event.type === "done") {
+              cancelAnimationFrame(frame);
+              flush();
+              updateAssistant(assistant.id, (m) => ({ ...m, status: "done" }));
+            }
+          },
+          controller.signal
+        );
+      } catch (err) {
+        cancelAnimationFrame(frame);
+        flush();
+        if (controller.signal.aborted) {
+          updateAssistant(assistant.id, (m) => ({ ...m, status: "stopped" }));
+        } else {
+          const message = err instanceof Error ? err.message : "The answer couldn't be generated.";
+          updateAssistant(assistant.id, (m) => ({ ...m, status: "error", error: message }));
+        }
+      } finally {
+        abortRef.current = null;
+        setStreaming(false);
+      }
+    },
+    [selected, streaming, updateAssistant]
+  );
+
+  function stop() {
+    abortRef.current?.abort();
   }
 
-  const scope =
+  function retry(assistantId: string) {
+    const index = messages.findIndex((m) => m.id === assistantId);
+    const userMsg = messages[index - 1];
+    if (!userMsg || userMsg.role !== "user") return;
+    // If it's the latest answer, replace it; otherwise ask again at the end
+    const isLast = index === messages.length - 1;
+    ask(userMsg.content, isLast ? messages.slice(0, index - 1) : messages);
+  }
+
+  function newChat() {
+    stop();
+    setMessages([]);
+    setEvidence(null);
+    composerRef.current?.focus();
+  }
+
+  // Save the conversation whenever an answer settles
+  useEffect(() => {
+    if (!streaming) saveConversation(messages);
+  }, [messages, streaming]);
+
+  // ---------- Scrolling ----------
+  useEffect(() => {
+    if (atBottom) scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
+  }, [messages, atBottom]);
+
+  function onScroll() {
+    const el = scroller.current;
+    if (!el) return;
+    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+  }
+
+  // ---------- Drag and drop anywhere ----------
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes("Files");
+    const enter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth++;
+      setDragging(true);
+    };
+    const leave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDragging(false);
+    };
+    const over = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    };
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      addFiles(Array.from(e.dataTransfer?.files ?? []));
+    };
+    window.addEventListener("dragenter", enter);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("dragover", over);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragenter", enter);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("drop", drop);
+    };
+  }, [addFiles]);
+
+  // ---------- Keyboard shortcuts ----------
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const typing = /^(INPUT|TEXTAREA)$/.test((e.target as HTMLElement).tagName);
+      if (e.key === "/" && !typing) {
+        e.preventDefault();
+        composerRef.current?.focus();
+      } else if (e.key === "Escape") {
+        if (evidence) setEvidence(null);
+        else if (libraryOpen) setLibraryOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [evidence, libraryOpen]);
+
+  // ---------- Derived ----------
+  const evidenceData = useMemo(() => {
+    if (!evidence) return null;
+    const index = messages.findIndex((m) => m.id === evidence.messageId);
+    const msg = messages[index];
+    if (!msg || msg.role !== "assistant") return null;
+    const cited = citedNumbers(msg.content);
+    const sources = msg.sources.filter((s) => cited.has(s.n));
+    const prev = messages[index - 1];
+    return {
+      sources: sources.length ? sources : msg.sources,
+      terms: prev?.role === "user" ? keyTerms(prev.content) : [],
+    };
+  }, [evidence, messages]);
+
+  const hasDocs = documents.length > 0;
+  const firstQuestion = messages.find((m) => m.role === "user")?.content;
+  const showOnboarding = !docsLoading && !docsError && !hasDocs && uploads.length === 0 && messages.length === 0;
+
+  const scopeLabel =
     selected.size === 0
-      ? "Searching all documents"
-      : `Searching ${selected.size} selected document${selected.size > 1 ? "s" : ""}`;
+      ? hasDocs
+        ? documents.length === 1
+          ? `Searching ${documents[0].name.replace(/\.pdf$/i, "")}`
+          : `Searching all ${documents.length} documents`
+        : "No documents yet"
+      : selected.size === 1
+        ? `Searching ${documents.find((d) => selected.has(d.id))?.name.replace(/\.pdf$/i, "") ?? "1 document"}`
+        : `Searching ${selected.size} selected documents`;
+
+  const library = (
+    <Library
+      documents={documents}
+      loading={docsLoading}
+      loadError={docsError}
+      uploads={uploads}
+      selected={selected}
+      onToggle={toggle}
+      onClearSelection={() => setSelected(new Set())}
+      onDelete={removeDocument}
+      onPickFiles={() => fileInput.current?.click()}
+      onDismissUpload={(id) => setUploads((u) => u.filter((x) => x.id !== id))}
+      onRetryLoad={loadDocs}
+    />
+  );
 
   return (
-    <div className="flex h-full flex-col md:flex-row">
-      {/* Sidebar: documents */}
-      <aside className="flex w-full flex-col border-b border-border bg-surface md:h-full md:w-80 md:border-b-0 md:border-r">
-        <div className="p-5">
-          <h1 className="text-lg font-semibold">AI Document Chat</h1>
-          <p className="mt-1 text-sm text-muted">Ask questions. Get answers with sources.</p>
-        </div>
+    <div className="flex h-dvh overflow-hidden">
+      <input
+        ref={fileInput}
+        type="file"
+        accept="application/pdf"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          addFiles(Array.from(e.target.files ?? []));
+          e.target.value = "";
+        }}
+      />
 
-        <div className="px-5">
-          <label
-            className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm transition hover:border-accent hover:bg-accent-soft ${uploading ? "pointer-events-none opacity-60" : ""}`}
-          >
-            <span className="font-medium">{uploading ? "Processing…" : "Upload PDF"}</span>
-            <span className="mt-1 text-xs text-muted">Up to 10 MB each</span>
-            <input
-              ref={fileInput}
-              type="file"
-              accept="application/pdf"
-              multiple
-              className="hidden"
-              onChange={(e) => upload(e.target.files)}
-            />
-          </label>
-        </div>
-
-        <div className="mt-5 flex-1 overflow-y-auto px-3 pb-4">
-          <p className="px-2 pb-2 text-xs font-medium uppercase tracking-wide text-muted">
-            Documents ({documents.length})
-          </p>
-          {documents.length === 0 && (
-            <p className="px-2 text-sm text-muted">No documents yet.</p>
-          )}
-          <ul className="space-y-1">
-            {documents.map((d) => (
-              <li
-                key={d.id}
-                className={`group flex items-start gap-2 rounded-md px-2 py-2 text-sm ${selected.has(d.id) ? "bg-accent-soft" : "hover:bg-background"}`}
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(d.id)}
-                  onChange={() => toggle(d.id)}
-                  className="mt-1 accent-[var(--accent)]"
-                  aria-label={`Search only ${d.name}`}
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium" title={d.name}>{d.name}</p>
-                  <p className="text-xs text-muted">{d.page_count} pages</p>
-                </div>
-                <button
-                  onClick={() => remove(d.id)}
-                  className="text-xs text-muted opacity-0 transition hover:text-red-600 group-hover:opacity-100"
-                  aria-label={`Delete ${d.name}`}
-                >
-                  Delete
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
+      {/* Library: fixed column on desktop, drawer on mobile */}
+      <aside className="hidden w-[280px] shrink-0 border-r border-rule bg-paper md:block" aria-label="Library">
+        {library}
       </aside>
 
-      {/* Chat */}
-      <main className="flex min-h-0 flex-1 flex-col">
-        <div className="flex-1 overflow-y-auto px-4 py-6 md:px-10">
-          <div className="mx-auto max-w-3xl space-y-6">
-            {messages.length === 0 && (
-              <div className="mt-16 text-center">
-                <h2 className="text-2xl font-semibold">Ask your documents anything</h2>
-                <p className="mt-2 text-muted">
-                  Upload a contract, manual, or report, then ask questions in plain language.
-                </p>
-                <div className="mt-6 flex flex-wrap justify-center gap-2">
-                  {["Summarise this document", "What are the key dates?", "List the main risks"].map(
-                    (s) => (
-                      <button
-                        key={s}
-                        onClick={() => setQuestion(s)}
-                        className="rounded-full border border-border bg-surface px-4 py-2 text-sm hover:border-accent"
-                      >
-                        {s}
-                      </button>
-                    )
-                  )}
-                </div>
-              </div>
-            )}
-
-            {messages.map((m, i) =>
-              m.role === "user" ? (
-                <div key={i} className="flex justify-end">
-                  <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-accent px-4 py-2.5 text-white dark:text-[#10201a]">
-                    {m.content}
-                  </p>
-                </div>
-              ) : (
-                <div key={i} className="rounded-2xl border border-border bg-surface p-5">
-                  <Answer text={m.content} sources={m.sources} onCite={setOpenSource} />
-                  {m.sources.length > 0 && (
-                    <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-3">
-                      {m.sources.map((s) => (
-                        <button
-                          key={s.n}
-                          onClick={() => setOpenSource(s)}
-                          className="rounded-md bg-accent-soft px-2.5 py-1 text-xs hover:ring-1 hover:ring-accent"
-                        >
-                          [{s.n}] {s.documentName} · p.{s.page}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            )}
-
-            {thinking && <p className="text-sm text-muted">Reading your documents…</p>}
-            <div ref={bottom} />
-          </div>
-        </div>
-
-        {error && (
-          <div className="mx-auto mb-2 w-full max-w-3xl px-4">
-            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-200">
-              {error}
-            </p>
-          </div>
-        )}
-
-        <form onSubmit={ask} className="border-t border-border bg-surface px-4 py-4 md:px-10">
-          <div className="mx-auto max-w-3xl">
-            <p className="mb-2 text-xs text-muted">{scope}</p>
-            <div className="flex gap-2">
-              <input
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                placeholder={documents.length ? "Ask a question…" : "Upload a PDF to get started"}
-                disabled={documents.length === 0}
-                className="flex-1 rounded-lg border border-border bg-background px-4 py-3 outline-none focus:border-accent disabled:opacity-60"
-              />
-              <button
-                type="submit"
-                disabled={!question.trim() || thinking}
-                className="rounded-lg bg-accent px-5 font-medium text-white disabled:opacity-50 dark:text-[#10201a]"
-              >
-                Ask
-              </button>
-            </div>
-          </div>
-        </form>
-      </main>
-
-      {/* Source viewer */}
-      {openSource && (
-        <div
-          className="fixed inset-0 z-10 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => setOpenSource(null)}
-        >
-          <div
-            className="max-h-[80vh] w-full max-w-xl overflow-y-auto rounded-xl bg-surface p-6 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs text-muted">Source [{openSource.n}]</p>
-                <h3 className="font-semibold">
-                  {openSource.documentName} · page {openSource.page}
-                </h3>
-              </div>
-              <button onClick={() => setOpenSource(null)} className="text-muted hover:text-foreground">
-                Close
-              </button>
-            </div>
-            <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed">{openSource.excerpt}</p>
+      {libraryOpen && (
+        <div className="fixed inset-0 z-40 md:hidden" role="dialog" aria-modal="true" aria-label="Library">
+          <button className="absolute inset-0 bg-ink/30" onClick={() => setLibraryOpen(false)} aria-label="Close library" />
+          <div className="absolute inset-y-0 left-0 w-[86%] max-w-[320px] bg-paper shadow-lift">
+            <button
+              onClick={() => setLibraryOpen(false)}
+              className="absolute right-3 top-4 rounded-md p-1.5 text-[18px] text-slate hover:bg-sunken"
+              aria-label="Close library"
+            >
+              <CloseIcon />
+            </button>
+            {library}
           </div>
         </div>
       )}
+
+      {/* Conversation */}
+      <main className="relative flex min-w-0 flex-1 flex-col bg-surface">
+        <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-rule px-3 md:px-6">
+          <button
+            onClick={() => setLibraryOpen(true)}
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[14px] font-medium hover:bg-sunken md:hidden"
+          >
+            <MenuIcon className="text-[18px]" />
+            Library
+            {hasDocs && <span className="rounded-full bg-sunken px-1.5 text-[12px] text-slate">{documents.length}</span>}
+          </button>
+          <p className="hidden min-w-0 truncate text-[14px] font-medium md:block">
+            {firstQuestion ?? <span className="font-normal text-slate">New conversation</span>}
+          </p>
+          {messages.length > 0 && (
+            <button
+              onClick={newChat}
+              className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13.5px] font-medium hover:bg-sunken"
+            >
+              <PlusIcon className="text-[16px]" />
+              New chat
+            </button>
+          )}
+        </header>
+
+        <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-[720px] px-4 pb-8 pt-8 md:px-6">
+            {showOnboarding && <Onboarding onPick={() => fileInput.current?.click()} onSample={addSample} />}
+
+            {!showOnboarding && messages.length === 0 && (
+              <div className="pt-[12vh]">
+                <h1 className="text-[26px] font-semibold tracking-tight">What do you want to find out?</h1>
+                <p className="mt-1.5 text-slate">
+                  {hasDocs
+                    ? "Ask in plain language. Every answer links to the passage it came from."
+                    : "Your PDFs are being indexed. You can ask as soon as they're ready."}
+                </p>
+                {hasDocs && (
+                  <div className="mt-6 flex flex-col items-start gap-2">
+                    {SUGGESTIONS.map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => ask(s, messages)}
+                        className="rounded-lg border border-rule px-3.5 py-2 text-left text-[14px] transition hover:border-action hover:bg-action-soft"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <Conversation
+              messages={messages}
+              activeCitation={evidence}
+              onCite={(messageId, n) => setEvidence({ messageId, n })}
+              onRetry={retry}
+            />
+          </div>
+        </div>
+
+        {!atBottom && messages.length > 0 && (
+          <button
+            onClick={() => {
+              setAtBottom(true);
+              scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
+            }}
+            className="absolute bottom-36 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-rule bg-surface px-3 py-1.5 text-[13px] shadow-lift hover:bg-sunken"
+          >
+            <ArrowDownIcon />
+            Latest
+          </button>
+        )}
+
+        <div className="shrink-0 px-3 pb-3 pt-1 md:px-6 md:pb-5">
+          <div className="mx-auto max-w-[720px]">
+            <Composer
+              ref={composerRef}
+              value={question}
+              onChange={setQuestion}
+              onSubmit={() => ask(question, messages)}
+              onStop={stop}
+              streaming={streaming}
+              disabled={!hasDocs}
+              scopeLabel={scopeLabel}
+              maxLength={LIMITS.maxQuestionLength}
+            />
+            <p className="mt-2 hidden text-center text-[12px] text-slate md:block">
+              Answers come only from your documents. Check the evidence before relying on them.
+            </p>
+          </div>
+        </div>
+      </main>
+
+      {/* Evidence: side rail on large screens, bottom sheet elsewhere */}
+      {evidence && evidenceData && (
+        <>
+          <aside className="hidden w-[380px] shrink-0 border-l border-rule bg-paper xl:block" aria-label="Evidence">
+            <EvidencePanel
+              sources={evidenceData.sources}
+              activeN={evidence.n}
+              terms={evidenceData.terms}
+              onSelect={(n) => setEvidence({ ...evidence, n })}
+              onClose={() => setEvidence(null)}
+            />
+          </aside>
+          <div className="fixed inset-0 z-40 xl:hidden" role="dialog" aria-modal="true" aria-label="Evidence">
+            <button className="absolute inset-0 bg-ink/30" onClick={() => setEvidence(null)} aria-label="Close evidence" />
+            <div className="sheet-enter absolute inset-x-0 bottom-0 max-h-[78dvh] rounded-t-2xl bg-paper shadow-lift md:inset-x-auto md:inset-y-0 md:right-0 md:max-h-none md:w-[400px] md:rounded-none">
+              <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-rule md:hidden" aria-hidden="true" />
+              <div className="h-[calc(78dvh-12px)] md:h-full">
+                <EvidencePanel
+                  sources={evidenceData.sources}
+                  activeN={evidence.n}
+                  terms={evidenceData.terms}
+                  onSelect={(n) => setEvidence({ ...evidence, n })}
+                  onClose={() => setEvidence(null)}
+                />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {dragging && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-action/10 p-6 backdrop-blur-[2px]">
+          <div className="flex flex-col items-center rounded-2xl border-2 border-dashed border-action bg-surface px-10 py-8 text-center shadow-lift">
+            <UploadIcon className="text-[28px] text-action" />
+            <p className="mt-2 text-[17px] font-semibold">Drop PDFs to add them</p>
+            <p className="text-[13px] text-slate">Up to {LIMITS.maxFileSizeMb} MB each</p>
+          </div>
+        </div>
+      )}
+
+      <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
     </div>
   );
 }
 
-// Render the answer with clickable [n] citations
-function Answer({
-  text,
-  sources,
-  onCite,
-}: {
-  text: string;
-  sources: Source[];
-  onCite: (s: Source) => void;
-}) {
-  const parts = text.split(/(\[\d+\])/g);
+function Onboarding({ onPick, onSample }: { onPick: () => void; onSample: () => void }) {
   return (
-    <div className="whitespace-pre-wrap leading-relaxed">
-      {parts.map((part, i) => {
-        const match = part.match(/^\[(\d+)\]$/);
-        const source = match && sources.find((s) => s.n === Number(match[1]));
-        if (source) {
-          return (
-            <button
-              key={i}
-              onClick={() => onCite(source)}
-              className="mx-0.5 rounded bg-accent-soft px-1 text-xs font-medium text-accent hover:ring-1 hover:ring-accent"
-            >
-              {source.n}
-            </button>
-          );
-        }
-        return <span key={i}>{part}</span>;
-      })}
-    </div>
+    <section className="pt-[8vh]">
+      <h1 className="max-w-[16ch] text-[34px] font-semibold leading-[1.15] tracking-tight md:text-[40px]">
+        Ask your PDFs. <span className="mark">Check every answer.</span>
+      </h1>
+      <p className="mt-4 max-w-[52ch] text-[16px] text-slate">
+        Add a contract, manual or report and ask questions in plain language. Each answer points to the page it came
+        from, so you never have to take it on trust.
+      </p>
+
+      <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+        <button
+          onClick={onPick}
+          className="flex items-center justify-center gap-2 rounded-xl bg-action px-5 py-3 font-medium text-action-ink transition hover:opacity-90"
+        >
+          <UploadIcon className="text-[17px]" />
+          Choose PDFs
+        </button>
+        <button
+          onClick={onSample}
+          className="rounded-xl border border-rule px-5 py-3 font-medium transition hover:border-action hover:bg-action-soft"
+        >
+          Try a sample rental agreement
+        </button>
+      </div>
+      <p className="mt-3 text-[13px] text-slate">You can also drop files anywhere on this page.</p>
+
+      <ol className="mt-12 grid gap-5 border-t border-rule pt-6 sm:grid-cols-3">
+        {[
+          ["Add documents", "PDFs with selectable text, up to 10 MB each."],
+          ["Ask a question", "Dates, amounts, obligations, definitions."],
+          ["Check the source", "Tap a highlighted number to read the passage."],
+        ].map(([title, body], i) => (
+          <li key={title}>
+            <p className="text-[13px] text-slate">Step {i + 1}</p>
+            <p className="mt-0.5 font-medium">{title}</p>
+            <p className="mt-1 text-[14px] text-slate">{body}</p>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
