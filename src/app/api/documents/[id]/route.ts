@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase";
-
+import { publicError } from "@/lib/errors";
 
 // DELETE /api/documents/:id — remove a document and its chunks
 export async function DELETE(
@@ -13,8 +13,7 @@ export async function DELETE(
     if (error) throw error;
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error(err);
-    const message = err instanceof Error ? err.message : "Delete failed.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const e = publicError(err, "delete");
+    return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
   }
 }

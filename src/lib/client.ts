@@ -17,10 +17,22 @@ export const uid = () => Math.random().toString(36).slice(2, 10);
 
 // ---------- API calls ----------
 
+// An error from our API, carrying a machine-readable code for the UI
+export class ApiError extends Error {
+  constructor(message: string, public code: string = "unknown") {
+    super(message);
+  }
+}
+
 export async function fetchDocuments(): Promise<DocumentInfo[]> {
-  const res = await fetch("/api/documents", { cache: "no-store" });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Couldn't load documents.");
+  let res: Response;
+  try {
+    res = await fetch("/api/documents", { cache: "no-store" });
+  } catch {
+    throw new ApiError("You appear to be offline. Check your connection and try again.", "offline");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(data.error || "Couldn't load your library.", data.code);
   return data.documents;
 }
 

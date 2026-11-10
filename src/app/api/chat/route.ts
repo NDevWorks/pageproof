@@ -3,6 +3,7 @@ import { getSupabase } from "@/lib/supabase";
 import { embed, streamAnswer, type ChatTurn } from "@/lib/ai";
 import { LIMITS, RAG } from "@/lib/config";
 import type { ChatEvent, Source } from "@/lib/types";
+import { publicError } from "@/lib/errors";
 
 export const maxDuration = 60;
 
@@ -102,11 +103,7 @@ export async function POST(req: Request) {
         send({ type: "done" });
       } catch (err) {
         if (req.signal.aborted) return; // user pressed Stop
-        console.error(err);
-        send({
-          type: "error",
-          message: err instanceof Error ? err.message : "The answer couldn't be generated.",
-        });
+        send({ type: "error", message: publicError(err, "chat").message });
       } finally {
         try {
           controller.close();

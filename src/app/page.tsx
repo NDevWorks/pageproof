@@ -11,6 +11,7 @@ import {
   streamChat,
   uid,
   uploadDocument,
+  ApiError,
   type AssistantMessage,
   type Message,
 } from "@/lib/client";
@@ -37,7 +38,7 @@ export default function Home() {
   // Documents
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [docsLoading, setDocsLoading] = useState(true);
-  const [docsError, setDocsError] = useState<string | null>(null);
+  const [docsError, setDocsError] = useState<{ message: string; code: string } | null>(null);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -72,7 +73,10 @@ export default function Home() {
     try {
       setDocuments(await fetchDocuments());
     } catch (err) {
-      setDocsError(err instanceof Error ? err.message : "Couldn't load documents.");
+      setDocsError({
+        message: err instanceof Error ? err.message : "Couldn't load your library.",
+        code: err instanceof ApiError ? err.code : "unknown",
+      });
     } finally {
       setDocsLoading(false);
     }
@@ -348,7 +352,7 @@ export default function Home() {
     <Library
       documents={documents}
       loading={docsLoading}
-      loadError={docsError}
+      loadError={docsError ? "Library unavailable." : null}
       uploads={uploads}
       selected={selected}
       onToggle={toggle}
@@ -422,9 +426,13 @@ export default function Home() {
 
         <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-[720px] px-4 pb-8 pt-8 md:px-6">
+            {docsError && !hasDocs && messages.length === 0 && (
+              <Unavailable error={docsError} onRetry={loadDocs} retrying={docsLoading} />
+            )}
+
             {showOnboarding && <Onboarding onPick={() => fileInput.current?.click()} onSample={addSample} />}
 
-            {!showOnboarding && messages.length === 0 && (
+            {!showOnboarding && !docsError && !docsLoading && (hasDocs || uploads.length > 0) && messages.length === 0 && (
               <div className="pt-[12vh]">
                 <h1 className="text-[26px] font-semibold tracking-tight">What do you want to find out?</h1>
                 <p className="mt-1.5 text-slate">
@@ -532,6 +540,34 @@ export default function Home() {
 
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
     </div>
+  );
+}
+
+// Shown when the library can't load: says what happened in plain words and offers a retry
+function Unavailable({
+  error,
+  onRetry,
+  retrying,
+}: {
+  error: { message: string; code: string };
+  onRetry: () => void;
+  retrying: boolean;
+}) {
+  const notReady = error.code === "not_configured";
+  return (
+    <section className="pt-[12vh]" role="alert">
+      <h1 className="text-[26px] font-semibold tracking-tight">
+        {notReady ? "PageProof is almost ready" : error.code === "offline" ? "You're offline" : "Your library didn't load"}
+      </h1>
+      <p className="mt-2 max-w-[52ch] text-slate">{error.message}</p>
+      <button
+        onClick={onRetry}
+        disabled={retrying}
+        className="mt-6 rounded-xl border border-rule px-5 py-2.5 font-medium transition hover:border-action hover:bg-action-soft disabled:opacity-50"
+      >
+        {retrying ? "Checking" : "Try again"}
+      </button>
+    </section>
   );
 }
 

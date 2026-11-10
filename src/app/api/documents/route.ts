@@ -4,6 +4,7 @@ import { embed } from "@/lib/ai";
 import { chunkPages } from "@/lib/chunk";
 import { extractPdfPages } from "@/lib/pdf";
 import { LIMITS } from "@/lib/config";
+import { publicError } from "@/lib/errors";
 
 export const maxDuration = 60;
 
@@ -100,7 +101,6 @@ export async function POST(req: Request) {
 }
 
 function errorResponse(err: unknown) {
-  console.error(err);
-  const message = err instanceof Error ? err.message : "Something went wrong.";
-  return NextResponse.json({ error: message }, { status: 500 });
+  const e = publicError(err, "documents");
+  return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
 }
