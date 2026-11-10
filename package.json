@@ -28,5 +28,10 @@
     "eslint-config-next": "16.4.6",
     "tailwindcss": "4.3.3",
     "typescript": "^5"
+  },
+  "homepage": "https://pageproof-app.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NDevWorks/pageproof.git"
   }
 }
