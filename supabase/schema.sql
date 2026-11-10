@@ -1,4 +1,4 @@
--- AI Document Chat: database schema
+-- PageProof: database schema
 -- Run this once in the Supabase SQL editor (Dashboard → SQL Editor → New query).
 
 create extension if not exists vector with schema extensions;

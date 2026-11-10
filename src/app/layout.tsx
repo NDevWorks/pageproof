@@ -7,7 +7,7 @@ import "@fontsource/ibm-plex-serif/400-italic.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AI Document Chat",
+  title: "PageProof: ask your PDFs, check every answer",
   description: "Ask questions about your PDFs and see the exact passage behind every answer.",
 };
 

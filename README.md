@@ -1,10 +1,12 @@
-# AI Document Chat
+# PageProof
+
+**AI document chat with page-level proof.**
 
 Upload PDFs and ask questions in plain language. Every answer is **highlighted with its sources**. Tap a number to read the exact passage and page it came from, so you never have to take the answer on trust.
 
-![AI Document Chat: answer with highlighted citations and the evidence panel](docs/screenshot.png)
+![PageProof: answer with highlighted citations and the evidence panel](docs/screenshot.png)
 
-> **Live demo:** _coming soon_
+> **Live demo:** [pageproof-app.vercel.app](https://pageproof-app.vercel.app). Click **Try a sample rental agreement** to test it in seconds.
 
 ---
 
@@ -106,8 +108,8 @@ supabase/schema.sql           Database tables and search function
 
 1. **Clone and install**
    ```bash
-   git clone https://github.com/NDevWorks/ai-document-chat.git
-   cd ai-document-chat
+   git clone https://github.com/NDevWorks/pageproof.git
+   cd pageproof
    npm install
    ```
 

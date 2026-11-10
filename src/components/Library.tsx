@@ -49,7 +49,7 @@ export function Library({
   return (
     <div className="flex h-full flex-col">
       <div className="px-4 pb-3 pt-5">
-        <p className="text-[17px] font-semibold tracking-tight">Document Chat</p>
+        <p className="text-[17px] font-semibold tracking-tight">PageProof</p>
         <p className="text-[13px] text-slate">Answers you can check, page by page.</p>
       </div>
 
