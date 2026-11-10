@@ -2,21 +2,28 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  SYSTEM_PROMPT,
+  buildContext,
   citedNumbers,
-  deleteDocument,
-  fetchDocuments,
   keyTerms,
   loadConversation,
   saveConversation,
-  streamChat,
   uid,
-  uploadDocument,
-  ApiError,
   type AssistantMessage,
   type Message,
 } from "@/lib/client";
+import { LibraryError, addDocument, deleteDocument, findPassages, listDocuments } from "@/lib/library";
+import {
+  ProviderError,
+  loadAiSettings,
+  providerName,
+  saveAiSettings,
+  streamAnswer,
+  type AiSettings,
+} from "@/lib/providers";
 import type { DocumentInfo } from "@/lib/types";
-import { LIMITS } from "@/lib/config";
+import { LIMITS, SEARCH } from "@/lib/config";
+import { ConnectAI } from "@/components/ConnectAI";
 import { Library, type UploadItem } from "@/components/Library";
 import { Conversation } from "@/components/Conversation";
 import { Composer } from "@/components/Composer";
@@ -39,6 +46,11 @@ export default function Home() {
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [docsLoading, setDocsLoading] = useState(true);
   const [docsError, setDocsError] = useState<{ message: string; code: string } | null>(null);
+
+  // Bring-your-own AI key (optional)
+  const [ai, setAi] = useState<AiSettings | null>(null);
+  const [aiRemembered, setAiRemembered] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -71,11 +83,11 @@ export default function Home() {
     setDocsLoading(true);
     setDocsError(null);
     try {
-      setDocuments(await fetchDocuments());
+      setDocuments(await listDocuments());
     } catch (err) {
       setDocsError({
-        message: err instanceof Error ? err.message : "Couldn't load your library.",
-        code: err instanceof ApiError ? err.code : "unknown",
+        message: err instanceof Error ? err.message : "Your library couldn't be opened.",
+        code: "storage",
       });
     } finally {
       setDocsLoading(false);
@@ -86,7 +98,26 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadDocs();
     setMessages(loadConversation());
+    const saved = loadAiSettings();
+    setAi(saved.settings);
+    setAiRemembered(saved.remembered);
   }, [loadDocs]);
+
+  function connectAi(settings: AiSettings, remember: boolean) {
+    saveAiSettings(settings, remember);
+    setAi(settings);
+    setAiRemembered(remember);
+    setConnectOpen(false);
+    toast("ok", `${providerName(settings.provider)} connected. Answers will now be written for you.`);
+    composerRef.current?.focus();
+  }
+
+  function disconnectAi() {
+    saveAiSettings(null, false);
+    setAi(null);
+    setConnectOpen(false);
+    toast("ok", "AI disconnected. Your key was removed from this browser.");
+  }
 
   const addFiles = useCallback(
     async (files: File[]) => {
@@ -102,7 +133,7 @@ export default function Home() {
       for (let i = 0; i < pdfs.length; i++) {
         const item = items[i];
         try {
-          const doc = await uploadDocument(pdfs[i]);
+          const doc = await addDocument(pdfs[i]);
           setUploads((u) => u.filter((x) => x.id !== item.id));
           setDocuments((d) => [doc, ...d.filter((x) => x.id !== doc.id)]);
           toast("ok", `${doc.name} is ready. ${doc.page_count} pages indexed.`);
@@ -167,13 +198,17 @@ export default function Home() {
       const assistant: AssistantMessage = {
         id: uid(),
         role: "assistant",
+        mode: ai ? "ai" : "passages",
         content: "",
         sources: [],
         status: "searching",
+        model: ai?.model,
       };
+      // Earlier written answers give follow-up questions their context
       const history = base
-        .filter((m) => m.role === "user" || (m.role === "assistant" && m.status === "done"))
-        .map((m) => ({ role: m.role, content: m.content }));
+        .filter((m) => m.role === "user" || (m.role === "assistant" && m.mode === "ai" && m.status === "done"))
+        .map((m) => ({ role: m.role, content: m.content }))
+        .slice(-6);
 
       setMessages([...base, userMsg, assistant]);
       setQuestion("");
@@ -196,30 +231,40 @@ export default function Home() {
       };
 
       try {
-        await streamChat(
-          { question: q, history, documentIds: [...selected] },
-          (event) => {
-            if (event.type === "status") updateAssistant(assistant.id, (m) => ({ ...m, status: event.stage }));
-            else if (event.type === "sources") updateAssistant(assistant.id, (m) => ({ ...m, sources: event.sources }));
-            else if (event.type === "delta") {
-              buffer += event.text;
-              if (!frame) frame = requestAnimationFrame(flush);
-            } else if (event.type === "error") throw new Error(event.message);
-            else if (event.type === "done") {
-              cancelAnimationFrame(frame);
-              flush();
-              updateAssistant(assistant.id, (m) => ({ ...m, status: "done" }));
-            }
-          },
-          controller.signal
-        );
+        // 1. Search this browser's library (free, no key)
+        const sources = await findPassages(q, [...selected], ai ? SEARCH.topK : SEARCH.passagesWithoutAi);
+        updateAssistant(assistant.id, (m) => ({ ...m, sources }));
+
+        // 2. No AI connected, or nothing matched: show the passages themselves
+        if (!ai || sources.length === 0) {
+          updateAssistant(assistant.id, (m) => ({ ...m, mode: "passages", status: "done" }));
+          return;
+        }
+
+        // 3. Ask the visitor's own AI, streaming the answer
+        updateAssistant(assistant.id, (m) => ({ ...m, status: "writing" }));
+        const messagesForAi = [
+          ...history,
+          { role: "user" as const, content: `Context:\n${buildContext(sources)}\n\nQuestion: ${q}` },
+        ];
+        for await (const text of streamAnswer(ai, SYSTEM_PROMPT, messagesForAi, controller.signal)) {
+          buffer += text;
+          if (!frame) frame = requestAnimationFrame(flush);
+        }
+        cancelAnimationFrame(frame);
+        flush();
+        updateAssistant(assistant.id, (m) => ({ ...m, status: "done" }));
       } catch (err) {
         cancelAnimationFrame(frame);
         flush();
         if (controller.signal.aborted) {
           updateAssistant(assistant.id, (m) => ({ ...m, status: "stopped" }));
         } else {
-          const message = err instanceof Error ? err.message : "The answer couldn't be generated.";
+          console.error(err);
+          const message =
+            err instanceof ProviderError || err instanceof LibraryError
+              ? err.message
+              : "The answer couldn't be generated. Try again.";
           updateAssistant(assistant.id, (m) => ({ ...m, status: "error", error: message }));
         }
       } finally {
@@ -227,7 +272,7 @@ export default function Home() {
         setStreaming(false);
       }
     },
-    [selected, streaming, updateAssistant]
+    [ai, selected, streaming, updateAssistant]
   );
 
   function stop() {
@@ -413,15 +458,30 @@ export default function Home() {
           <p className="hidden min-w-0 truncate text-[14px] font-medium md:block">
             {firstQuestion ?? <span className="font-normal text-slate">New conversation</span>}
           </p>
-          {messages.length > 0 && (
+          <div className="flex shrink-0 items-center gap-1">
+            {messages.length > 0 && (
+              <button
+                onClick={newChat}
+                className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13.5px] font-medium hover:bg-sunken"
+                aria-label="New chat"
+              >
+                <PlusIcon className="text-[16px]" />
+                <span className="hidden sm:inline">New chat</span>
+              </button>
+            )}
             <button
-              onClick={newChat}
-              className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13.5px] font-medium hover:bg-sunken"
+              onClick={() => setConnectOpen(true)}
+              className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-[13px] font-medium transition ${
+                ai ? "border-rule hover:bg-sunken" : "border-action text-action hover:bg-action-soft"
+              }`}
             >
-              <PlusIcon className="text-[16px]" />
-              New chat
+              <span
+                className={`h-2 w-2 rounded-full ${ai ? "bg-ok" : "bg-rule"}`}
+                aria-hidden="true"
+              />
+              {ai ? providerName(ai.provider) : "Connect AI"}
             </button>
-          )}
+          </div>
         </header>
 
         <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
@@ -461,6 +521,7 @@ export default function Home() {
               activeCitation={evidence}
               onCite={(messageId, n) => setEvidence({ messageId, n })}
               onRetry={retry}
+              onConnect={() => setConnectOpen(true)}
             />
           </div>
         </div>
@@ -538,6 +599,16 @@ export default function Home() {
         </div>
       )}
 
+      {connectOpen && (
+        <ConnectAI
+          current={ai}
+          remembered={aiRemembered}
+          onSave={connectAi}
+          onDisconnect={disconnectAi}
+          onClose={() => setConnectOpen(false)}
+        />
+      )}
+
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
     </div>
   );
@@ -597,13 +668,15 @@ function Onboarding({ onPick, onSample }: { onPick: () => void; onSample: () => 
           Try a sample rental agreement
         </button>
       </div>
-      <p className="mt-3 text-[13px] text-slate">You can also drop files anywhere on this page.</p>
+      <p className="mt-3 text-[13px] text-slate">
+        No sign-up. Your files stay in this browser and are never uploaded to PageProof.
+      </p>
 
       <ol className="mt-12 grid gap-5 border-t border-rule pt-6 sm:grid-cols-3">
         {[
-          ["Add documents", "PDFs with selectable text, up to 10 MB each."],
-          ["Ask a question", "Dates, amounts, obligations, definitions."],
-          ["Check the source", "Tap a highlighted number to read the passage."],
+          ["Add documents", `PDFs with selectable text, up to ${LIMITS.maxFileSizeMb} MB each.`],
+          ["Ask a question", "Get the exact passages free. Connect your own AI for written answers."],
+          ["Check the source", "Tap a highlighted number to read the passage and page."],
         ].map(([title, body], i) => (
           <li key={title}>
             <p className="text-[13px] text-slate">Step {i + 1}</p>

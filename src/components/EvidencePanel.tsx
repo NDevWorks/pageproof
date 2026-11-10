@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useRef } from "react";
 import type { Source } from "@/lib/types";
+import { bestSnippet, tidyPassage } from "@/lib/client";
 import { CloseIcon } from "./icons";
 
 type Props = {
@@ -57,15 +58,12 @@ export function EvidencePanel({ sources, activeN, terms, onSelect, onClose }: Pr
                   </h3>
                   <span className="shrink-0 text-[12px] text-slate">page {s.page}</span>
                 </header>
-                <blockquote
-                  className={`mt-2.5 font-serif text-[14px] leading-[1.7] text-ink ${
-                    active ? "" : "line-clamp-4"
-                  }`}
-                >
-                  <Highlighted text={s.excerpt} terms={terms} />
+                <blockquote className="mt-2.5 whitespace-pre-line font-serif text-[14px] leading-[1.7] text-ink">
+                  <Highlighted text={active ? tidyPassage(s.excerpt) : bestSnippet(s.excerpt, terms, 220)} terms={terms} />
                 </blockquote>
                 <p className="mt-2 text-[11.5px] text-slate">
-                  Match strength {Math.round(s.similarity * 100)}%
+                  {s.similarity >= 0.99 ? "Best match" : `Relevance ${Math.round(s.similarity * 100)}% of best match`}
+                  {!active && ". Tap to read in full."}
                 </p>
               </article>
             </li>
@@ -76,7 +74,7 @@ export function EvidencePanel({ sources, activeN, terms, onSelect, onClose }: Pr
   );
 }
 
-function Highlighted({ text, terms }: { text: string; terms: string[] }) {
+export function Highlighted({ text, terms }: { text: string; terms: string[] }) {
   if (terms.length === 0) return <>{text}</>;
   const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   const pattern = new RegExp(`(${escaped.join("|")})`, "gi");

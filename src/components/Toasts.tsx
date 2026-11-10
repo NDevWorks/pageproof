@@ -7,7 +7,7 @@ export type Toast = { id: string; kind: "ok" | "error"; text: string };
 export function Toasts({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: string) => void }) {
   return (
     <div
-      className="pointer-events-none fixed inset-x-0 top-16 z-50 flex flex-col items-center gap-2 px-4 md:inset-x-auto md:right-6 md:top-5 md:items-end"
+      className="pointer-events-none fixed inset-x-0 top-[68px] z-50 flex flex-col items-center gap-2 px-4"
       aria-live="polite"
     >
       {toasts.map((t) => (

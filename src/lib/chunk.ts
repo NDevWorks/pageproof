@@ -1,4 +1,4 @@
-import { RAG } from "./config";
+import { SEARCH as RAG } from "./config";
 
 export type PageText = { page: number; text: string };
 export type Chunk = { page: number; content: string };

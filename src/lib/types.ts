@@ -1,4 +1,4 @@
-// Shared between server routes and the browser UI.
+// Shared types for the browser app.
 
 export type DocumentInfo = {
   id: string;
@@ -8,20 +8,17 @@ export type DocumentInfo = {
   created_at: string;
 };
 
+export type StoredChunk = {
+  documentId: string;
+  page: number;
+  content: string;
+};
+
 export type Source = {
   n: number; // citation number shown as [n] in the answer
   documentId: string;
   documentName: string;
   page: number;
   excerpt: string;
-  similarity: number;
+  similarity: number; // 0–1, relative match strength within this search
 };
-
-// The chat endpoint streams newline-delimited JSON events in this order:
-// status → sources → delta (many) → done. "error" can arrive at any point.
-export type ChatEvent =
-  | { type: "status"; stage: "searching" | "writing" }
-  | { type: "sources"; sources: Source[] }
-  | { type: "delta"; text: string }
-  | { type: "done" }
-  | { type: "error"; message: string };
