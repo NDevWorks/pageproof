@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { DocumentInfo } from "@/lib/types";
 import { formatPages } from "@/lib/client";
-import { AlertIcon, CloseIcon, DocIcon, SearchIcon, TrashIcon, UploadIcon } from "./icons";
+import { AlertIcon, CloseIcon, DocIcon, FactsIcon, SearchIcon, TrashIcon, UploadIcon } from "./icons";
 
 export type UploadItem = {
   id: string;
@@ -21,6 +21,7 @@ type Props = {
   onToggle: (id: string) => void;
   onClearSelection: () => void;
   onDelete: (doc: DocumentInfo) => void;
+  onShowFacts: (doc: DocumentInfo) => void;
   onPickFiles: () => void;
   onDismissUpload: (id: string) => void;
   onRetryLoad: () => void;
@@ -35,6 +36,7 @@ export function Library({
   onToggle,
   onClearSelection,
   onDelete,
+  onShowFacts,
   onPickFiles,
   onDismissUpload,
   onRetryLoad,
@@ -198,6 +200,14 @@ export function Library({
                       </span>
                     </label>
                     <button
+                      onClick={() => onShowFacts(d)}
+                      className="rounded p-1 text-slate transition hover:bg-surface hover:text-action"
+                      aria-label={`Key facts in ${d.name}`}
+                      title="Key facts: dates, amounts, time periods"
+                    >
+                      <FactsIcon className="text-[16px]" />
+                    </button>
+                    <button
                       onClick={() => setConfirming(d.id)}
                       className="rounded p-1 text-slate opacity-0 transition hover:text-danger focus:opacity-100 group-hover:opacity-100"
                       aria-label={`Delete ${d.name}`}
@@ -217,7 +227,7 @@ export function Library({
       </div>
 
       <p className="border-t border-rule px-4 py-3 text-[12px] text-slate">
-        Tick documents to limit answers to them.
+        Tick documents to limit answers to them. The list icon shows key dates and amounts.
       </p>
     </div>
   );

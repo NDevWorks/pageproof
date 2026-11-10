@@ -4,7 +4,7 @@ import { memo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { AssistantMessage, Message } from "@/lib/client";
-import { bestSnippet, citedNumbers, keyTerms } from "@/lib/client";
+import { bestSnippet, citedNumbers, isNonLatin, keyTerms } from "@/lib/client";
 import type { Source } from "@/lib/types";
 import { Highlighted } from "./EvidencePanel";
 import { AlertIcon, CheckIcon, CopyIcon, RetryIcon } from "./icons";
@@ -15,9 +15,10 @@ type Props = {
   onCite: (messageId: string, n: number) => void;
   onRetry: (assistantId: string) => void;
   onConnect: () => void;
+  onViewPage: (source: Source, terms: string[]) => void;
 };
 
-export function Conversation({ messages, activeCitation, onCite, onRetry, onConnect }: Props) {
+export function Conversation({ messages, activeCitation, onCite, onRetry, onConnect, onViewPage }: Props) {
   return (
     <ol className="space-y-8" aria-label="Conversation">
       {messages.map((m, i) =>
@@ -34,14 +35,15 @@ export function Conversation({ messages, activeCitation, onCite, onRetry, onConn
           <li key={m.id}>
             <Answer
               message={m}
-              terms={(() => {
+              question={(() => {
                 const prev = messages[i - 1];
-                return prev?.role === "user" ? keyTerms(prev.content) : [];
+                return prev?.role === "user" ? prev.content : "";
               })()}
               activeN={activeCitation?.messageId === m.id ? activeCitation.n : null}
               onCite={(n) => onCite(m.id, n)}
               onRetry={() => onRetry(m.id)}
               onConnect={onConnect}
+              onViewPage={onViewPage}
             />
           </li>
         )
@@ -52,27 +54,39 @@ export function Conversation({ messages, activeCitation, onCite, onRetry, onConn
 
 function Answer({
   message,
-  terms,
+  question,
   activeN,
   onCite,
   onRetry,
   onConnect,
+  onViewPage,
 }: {
   message: AssistantMessage;
-  terms: string[];
+  question: string;
   activeN: number | null;
   onCite: (n: number) => void;
   onRetry: () => void;
   onConnect: () => void;
+  onViewPage: (source: Source, terms: string[]) => void;
 }) {
   const { content, status, sources, error } = message;
+  // Highlight both the question's words and any English search words it was translated to
+  const terms = keyTerms(`${question} ${message.searchQuery ?? ""}`);
   const streaming = status === "searching" || status === "writing";
 
   if (message.mode === "passages" && !streaming && status !== "error") {
     return (
       <article>
         <p className="sr-only">Matching passages:</p>
-        <PassageResults sources={sources} terms={terms} activeN={activeN} onCite={onCite} onConnect={onConnect} />
+        <PassageResults
+          sources={sources}
+          terms={terms}
+          question={question}
+          activeN={activeN}
+          onCite={onCite}
+          onConnect={onConnect}
+          onViewPage={(s) => onViewPage(s, terms)}
+        />
       </article>
     );
   }
@@ -130,17 +144,32 @@ function Answer({
 function PassageResults({
   sources,
   terms,
+  question,
   activeN,
   onCite,
   onConnect,
+  onViewPage,
 }: {
   sources: Source[];
   terms: string[];
+  question: string;
   activeN: number | null;
   onCite: (n: number) => void;
   onConnect: () => void;
+  onViewPage: (source: Source) => void;
 }) {
   if (sources.length === 0) {
+    if (isNonLatin(question)) {
+      return (
+        <p className="text-slate">
+          No passages matched. To ask in Tamil, Hindi or another language about documents written in English,{" "}
+          <button onClick={onConnect} className="font-medium text-action hover:underline">
+            connect your AI
+          </button>
+          . It translates your question for the search and answers in your language (free options available).
+        </p>
+      );
+    }
     return (
       <p className="text-slate">
         No passages matched those words. Try the words the document itself would use, or check the right documents are
@@ -155,25 +184,30 @@ function PassageResults({
       </p>
       <ol className="mt-3 space-y-3">
         {sources.map((s) => (
-          <li key={s.n}>
-            <button
-              onClick={() => onCite(s.n)}
-              className={`block w-full rounded-xl border bg-surface p-4 text-left transition ${
-                activeN === s.n ? "border-action shadow-lift" : "border-rule hover:border-slate"
-              }`}
-            >
-              <span className="flex items-baseline gap-2">
-                <span className="mark shrink-0 text-[12px] font-semibold tabular-nums">{s.n}</span>
-                <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
-                  {s.documentName.replace(/\.pdf$/i, "")}
-                </span>
-                <span className="shrink-0 text-[12px] text-slate">page {s.page}</span>
+          <li
+            key={s.n}
+            className={`rounded-xl border bg-surface p-4 transition ${
+              activeN === s.n ? "border-action shadow-lift" : "border-rule"
+            }`}
+          >
+            <p className="flex items-baseline gap-2">
+              <span className="mark shrink-0 text-[12px] font-semibold tabular-nums">{s.n}</span>
+              <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+                {s.documentName.replace(/\.pdf$/i, "")}
               </span>
-              <span className="mt-2 block font-serif text-[14.5px] leading-[1.7]">
-                <Highlighted text={bestSnippet(s.excerpt, terms)} terms={terms} />
-              </span>
-              <span className="mt-2 block text-[12px] text-action">Read the full passage</span>
-            </button>
+              <span className="shrink-0 text-[12px] text-slate">page {s.page}</span>
+            </p>
+            <p className="mt-2 font-serif text-[14.5px] leading-[1.7]">
+              <Highlighted text={bestSnippet(s.excerpt, terms)} terms={terms} />
+            </p>
+            <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[13px] font-medium">
+              <button onClick={() => onViewPage(s)} className="text-action hover:underline">
+                See it on the page
+              </button>
+              <button onClick={() => onCite(s.n)} className="text-slate hover:text-ink hover:underline">
+                Read the full passage
+              </button>
+            </div>
           </li>
         ))}
       </ol>
@@ -182,7 +216,7 @@ function PassageResults({
         <button onClick={onConnect} className="font-medium text-action hover:underline">
           Connect your AI
         </button>{" "}
-        (free options available).
+        (free options available, and you can ask in any language).
       </p>
     </div>
   );

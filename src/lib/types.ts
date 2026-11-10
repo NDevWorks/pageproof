@@ -6,6 +6,7 @@ export type DocumentInfo = {
   page_count: number;
   chunk_count: number;
   created_at: string;
+  has_file?: boolean; // original PDF kept, so pages can be shown
 };
 
 export type StoredChunk = {

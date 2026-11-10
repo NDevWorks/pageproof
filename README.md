@@ -15,7 +15,8 @@ Add PDFs and ask questions in plain language. PageProof finds the exact passages
 - **Private by design.** PDFs are read and searched **inside your browser**. They are never uploaded to a PageProof server, because there isn't one.
 - **Free to run.** Search works with no key at all. Hosting is a static site, so it costs nothing.
 - **Bring your own AI.** Connect Google Gemini, Groq, OpenAI or Anthropic Claude with your own key. Gemini and Groq offer free keys. The key stays in your browser and goes only to that provider.
-- **Answers you can verify.** Every answer cites the page. The AI is told to answer only from your documents and to say so when the answer isn't there.
+- **Answers you can verify.** Every answer cites the page, and one tap shows **the real PDF page with the matching lines highlighted**. The AI is told to answer only from your documents and to say so when the answer isn't there.
+- **Ask in your language.** Ask in Tamil, Hindi or any language and get the answer in that language, even when the document is in English.
 
 ## Why businesses use this
 
@@ -25,6 +26,20 @@ Add PDFs and ask questions in plain language. PageProof finds the exact passages
 - **Sensitive documents:** files never leave the device
 
 ## Features
+
+**See it on the real page**
+- Tap **See it on the page** on any passage or citation to open the original PDF page with the matching lines highlighted
+- Move between pages with Prev/Next or the arrow keys
+
+**Key facts, no AI needed**
+- One tap lists every **date, amount (₹, Rs., lakh, crore, $, €), percentage and time period** in a document
+- Each fact shows the sentence it came from and a link to its page
+- **Ask about this** turns any fact into a question
+
+**Ask in any language**
+- Answers come back in the language of the question
+- With an AI connected, a Tamil or Hindi question is also searched as English keywords, so English documents still match
+- Without an AI, PageProof explains how to enable this instead of returning nothing
 
 **Two ways to get answers**
 - **No key:** the best matching passages, opened at the matching sentence, with your question's words highlighted
@@ -53,6 +68,14 @@ Add PDFs and ask questions in plain language. PageProof finds the exact passages
 | First visit | Phone | Evidence on phone |
 |---|---|---|
 | <img src="docs/onboarding.png" alt="First-visit screen with sample document" width="420"> | <img src="docs/mobile-answer.png" alt="Answer on a phone" width="200"> | <img src="docs/mobile-evidence.png" alt="Evidence sheet on a phone" width="200"> |
+
+| Real page, highlighted | Key facts |
+|---|---|
+| <img src="docs/page-view.png" alt="Original PDF page with the cited lines highlighted" width="420"> | <img src="docs/key-facts.png" alt="Key facts: dates, amounts and time periods" width="420"> |
+
+| Ask in Tamil | Page view on phone |
+|---|---|
+| <img src="docs/tamil.png" alt="Question and answer in Tamil about an English document" width="420"> | <img src="docs/mobile-page.png" alt="Page view on a phone" width="200"> |
 
 | No key: matching passages | Connect your AI |
 |---|---|
@@ -96,10 +119,13 @@ src/
     Conversation.tsx          Answers, passages, markdown, citations
     Composer.tsx              Question box with stop/send
     EvidencePanel.tsx         Source passages with highlighted words
+    PageViewer.tsx            Original PDF page with highlighted lines
+    KeyFacts.tsx              Dates, amounts, percentages, time periods
     Toasts.tsx                Notifications
   lib/
     library.ts                PDF reading, browser storage, passage search
     search.ts                 BM25 ranking and tokenizer
+    facts.ts                  Key-fact pattern matching
     providers.ts              Gemini, Groq, OpenAI, Claude: models and streaming
     client.ts                 Prompt, saved chat, snippet and text helpers
     chunk.ts                  Passage splitting
@@ -133,7 +159,7 @@ No environment variables are needed.
 This is a working demo. For a client project, I'd typically add:
 
 - **Semantic search** (embeddings) alongside keyword search, so different wording still matches
-- OCR for scanned PDFs, plus Word, Excel and web page support
+- OCR for scanned PDFs (including Tamil and Hindi), plus Word, Excel and web page support
 - A shared team library with logins, if documents must be shared across devices
 - A managed AI key on a server, with usage limits, for clients who don't want end users to bring keys
 

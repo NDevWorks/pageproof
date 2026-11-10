@@ -218,6 +218,21 @@ export async function* streamAnswer(
   }
 }
 
+// A short, non-streamed reply (used to turn a question into English search words)
+export async function completeText(
+  settings: AiSettings,
+  system: string,
+  user: string,
+  signal: AbortSignal
+): Promise<string> {
+  let out = "";
+  for await (const text of streamAnswer(settings, system, [{ role: "user", content: user }], signal)) {
+    out += text;
+    if (out.length > 400) break;
+  }
+  return out.trim();
+}
+
 // ---------- Saved settings (this browser only) ----------
 
 const KEY = "pageproof.ai.v1";

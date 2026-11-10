@@ -72,7 +72,7 @@ export function ConnectAI({ current, remembered, onSave, onDisconnect, onClose }
           <div>
             <h2 id="connect-title" className="text-[19px] font-semibold">Connect your AI</h2>
             <p className="mt-1 text-[14px] text-slate">
-              Optional. Without it, PageProof still finds the exact passages. With it, you also get written answers.
+              Optional. Without it, PageProof still finds the exact passages. With it, you also get written answers, and you can ask in any language, including Tamil and Hindi.
             </p>
           </div>
           <button onClick={onClose} className="rounded-md p-1.5 text-[18px] text-slate hover:bg-sunken" aria-label="Close">

@@ -88,6 +88,21 @@ export const SearchIcon = (p: P) => (
     <path d="M20 20l-3.5-3.5" />
   </Icon>
 );
+export const FactsIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M9 6h11M9 12h11M9 18h11" />
+    <circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none" />
+  </Icon>
+);
+export const PageIcon = (p: P) => (
+  <Icon {...p}>
+    <rect x="5" y="3" width="14" height="18" rx="2" />
+    <path d="M8.5 9h7M8.5 12.5h7" />
+    <rect x="8" y="15" width="8" height="2.6" rx="0.6" fill="currentColor" stroke="none" opacity="0.35" />
+  </Icon>
+);
 export const AlertIcon = (p: P) => (
   <Icon {...p}>
     <circle cx="12" cy="12" r="9" />

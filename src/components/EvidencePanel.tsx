@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useRef } from "react";
 import type { Source } from "@/lib/types";
 import { bestSnippet, tidyPassage } from "@/lib/client";
-import { CloseIcon } from "./icons";
+import { CloseIcon, PageIcon } from "./icons";
 
 type Props = {
   sources: Source[];
@@ -11,10 +11,11 @@ type Props = {
   terms: string[];
   onSelect: (n: number) => void;
   onClose: () => void;
+  onViewPage: (source: Source) => void;
 };
 
 // Shows the passages behind an answer, with the question's key words highlighted.
-export function EvidencePanel({ sources, activeN, terms, onSelect, onClose }: Props) {
+export function EvidencePanel({ sources, activeN, terms, onSelect, onClose, onViewPage }: Props) {
   const activeRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -61,10 +62,24 @@ export function EvidencePanel({ sources, activeN, terms, onSelect, onClose }: Pr
                 <blockquote className="mt-2.5 whitespace-pre-line font-serif text-[14px] leading-[1.7] text-ink">
                   <Highlighted text={active ? tidyPassage(s.excerpt) : bestSnippet(s.excerpt, terms, 220)} terms={terms} />
                 </blockquote>
-                <p className="mt-2 text-[11.5px] text-slate">
-                  {s.similarity >= 0.99 ? "Best match" : `Relevance ${Math.round(s.similarity * 100)}% of best match`}
-                  {!active && ". Tap to read in full."}
-                </p>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <p className="text-[11.5px] text-slate">
+                    {s.similarity >= 0.99 ? "Best match" : `Relevance ${Math.round(s.similarity * 100)}% of best match`}
+                    {!active && ". Tap to read in full."}
+                  </p>
+                  {active && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onViewPage(s);
+                      }}
+                      className="flex shrink-0 items-center gap-1.5 rounded-lg bg-action px-3 py-1.5 text-[12.5px] font-medium text-action-ink hover:opacity-90"
+                    >
+                      <PageIcon className="text-[14px]" />
+                      See page {s.page}
+                    </button>
+                  )}
+                </div>
               </article>
             </li>
           );

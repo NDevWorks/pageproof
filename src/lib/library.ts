@@ -8,6 +8,7 @@ import type { DocumentInfo, Source, StoredChunk } from "./types";
 const store = typeof indexedDB !== "undefined" ? createStore("pageproof", "library") : undefined;
 const DOCS_KEY = "documents";
 const chunksKey = (id: string) => `chunks:${id}`;
+const fileKey = (id: string) => `file:${id}`;
 
 export class LibraryError extends Error {}
 
@@ -25,11 +26,16 @@ export async function listDocuments(): Promise<DocumentInfo[]> {
   }
 }
 
-async function readPdf(file: File): Promise<PageText[]> {
-  // Loaded on demand so the first page load stays light
-  const { extractText, getDocumentProxy } = await import("unpdf");
+// PDF.js may take ownership of the bytes it's given, so always hand it a copy
+export async function openPdf(bytes: Uint8Array) {
+  const { getDocumentProxy } = await import("unpdf");
+  return getDocumentProxy(bytes.slice());
+}
+
+async function readPdf(bytes: Uint8Array): Promise<PageText[]> {
+  const { extractText } = await import("unpdf");
   try {
-    const pdf = await getDocumentProxy(new Uint8Array(await file.arrayBuffer()));
+    const pdf = await openPdf(bytes);
     const { text } = await extractText(pdf, { mergePages: false });
     return text.map((t, i) => ({ page: i + 1, text: t }));
   } catch {
@@ -47,7 +53,8 @@ export async function addDocument(file: File): Promise<DocumentInfo> {
     throw new LibraryError(`Your library is full (${LIMITS.maxDocuments} documents). Delete one first.`);
   }
 
-  const pages = await readPdf(file);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const pages = await readPdf(bytes);
   if (pages.length > LIMITS.maxPages) {
     throw new LibraryError(`This PDF has ${pages.length} pages. The limit is ${LIMITS.maxPages}.`);
   }
@@ -62,14 +69,29 @@ export async function addDocument(file: File): Promise<DocumentInfo> {
     page_count: pages.length,
     chunk_count: chunks.length,
     created_at: new Date().toISOString(),
+    has_file: false,
   };
   const stored: StoredChunk[] = chunks.map((c) => ({ documentId: doc.id, page: c.page, content: c.content }));
 
   try {
     await set(chunksKey(doc.id), stored, s);
+  } catch {
+    throw new LibraryError("Not enough browser storage to save this document.");
+  }
+
+  // Keep the original so its pages can be shown. If storage is tight, search still works without it.
+  try {
+    await set(fileKey(doc.id), bytes, s);
+    doc.has_file = true;
+  } catch {
+    doc.has_file = false;
+  }
+
+  try {
     await set(DOCS_KEY, [doc, ...(await listDocuments())], s);
   } catch {
     await del(chunksKey(doc.id), s).catch(() => {});
+    await del(fileKey(doc.id), s).catch(() => {});
     throw new LibraryError("Not enough browser storage to save this document.");
   }
   return doc;
@@ -79,26 +101,48 @@ export async function deleteDocument(id: string): Promise<void> {
   const s = requireStore();
   await set(DOCS_KEY, (await listDocuments()).filter((d) => d.id !== id), s);
   await del(chunksKey(id), s);
+  await del(fileKey(id), s);
+}
+
+export async function getDocumentFile(id: string): Promise<Uint8Array | undefined> {
+  return get<Uint8Array>(fileKey(id), requireStore());
+}
+
+export async function getChunks(id: string): Promise<StoredChunk[]> {
+  return (await get<StoredChunk[]>(chunksKey(id), requireStore())) ?? [];
 }
 
 // Find the passages that best match a question, numbered for citation.
-export async function findPassages(question: string, documentIds: string[], topK = SEARCH.topK): Promise<Source[]> {
-  const s = requireStore();
+// Several phrasings (e.g. the question plus an English translation) can be searched at once.
+export async function findPassages(
+  queries: string | string[],
+  documentIds: string[],
+  topK = SEARCH.topK
+): Promise<Source[]> {
   const docs = await listDocuments();
   const scope = documentIds.length ? docs.filter((d) => documentIds.includes(d.id)) : docs;
   const names = new Map(scope.map((d) => [d.id, d.name]));
 
   const all: StoredChunk[] = [];
-  for (const d of scope) all.push(...((await get<StoredChunk[]>(chunksKey(d.id), s)) ?? []));
+  for (const d of scope) all.push(...(await getChunks(d.id)));
 
-  const results = bm25(question, all, topK);
-  const best = results[0]?.score || 1;
-  return results.map((r, i) => ({
-    n: i + 1,
-    documentId: r.item.documentId,
-    documentName: names.get(r.item.documentId) ?? "Document",
-    page: r.item.page,
-    excerpt: r.item.content,
-    similarity: Math.round((r.score / best) * 100) / 100,
-  }));
+  // Best score per passage across all phrasings, each normalised to its own top result
+  const best = new Map<StoredChunk, number>();
+  for (const q of Array.isArray(queries) ? queries : [queries]) {
+    const results = bm25(q, all, topK);
+    const top = results[0]?.score || 1;
+    for (const r of results) best.set(r.item, Math.max(best.get(r.item) ?? 0, r.score / top));
+  }
+
+  return [...best.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, topK)
+    .map(([chunk, score], i) => ({
+      n: i + 1,
+      documentId: chunk.documentId,
+      documentName: names.get(chunk.documentId) ?? "Document",
+      page: chunk.page,
+      excerpt: chunk.content,
+      similarity: Math.round(score * 100) / 100,
+    }));
 }

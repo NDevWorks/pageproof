@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SYSTEM_PROMPT,
+  TRANSLATE_PROMPT,
+  bestSnippet,
   buildContext,
+  isNonLatin,
   citedNumbers,
   keyTerms,
   loadConversation,
@@ -15,21 +18,25 @@ import {
 import { LibraryError, addDocument, deleteDocument, findPassages, listDocuments } from "@/lib/library";
 import {
   ProviderError,
+  completeText,
   loadAiSettings,
   providerName,
   saveAiSettings,
   streamAnswer,
   type AiSettings,
 } from "@/lib/providers";
-import type { DocumentInfo } from "@/lib/types";
+import type { DocumentInfo, Source } from "@/lib/types";
+import type { Fact } from "@/lib/facts";
 import { LIMITS, SEARCH } from "@/lib/config";
 import { ConnectAI } from "@/components/ConnectAI";
+import { KeyFacts } from "@/components/KeyFacts";
+import { PageViewer } from "@/components/PageViewer";
 import { Library, type UploadItem } from "@/components/Library";
 import { Conversation } from "@/components/Conversation";
 import { Composer } from "@/components/Composer";
 import { EvidencePanel } from "@/components/EvidencePanel";
 import { Toasts, type Toast } from "@/components/Toasts";
-import { ArrowDownIcon, CloseIcon, MenuIcon, PlusIcon, UploadIcon } from "@/components/icons";
+import { ArrowDownIcon, CloseIcon, FactsIcon, MenuIcon, PlusIcon, UploadIcon } from "@/components/icons";
 
 const SAMPLE_URL = "/sample/sample-rental-agreement.pdf";
 const SAMPLE_NAME = "Sample Rental Agreement.pdf";
@@ -51,6 +58,16 @@ export default function Home() {
   const [ai, setAi] = useState<AiSettings | null>(null);
   const [aiRemembered, setAiRemembered] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
+
+  // Real-page view and key facts
+  const [pageView, setPageView] = useState<{
+    documentId: string;
+    documentName: string;
+    page: number;
+    pageCount: number;
+    highlight: string;
+  } | null>(null);
+  const [factsDoc, setFactsDoc] = useState<DocumentInfo | null>(null);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -110,6 +127,28 @@ export default function Home() {
     setConnectOpen(false);
     toast("ok", `${providerName(settings.provider)} connected. Answers will now be written for you.`);
     composerRef.current?.focus();
+  }
+
+  function showSourcePage(source: Source, terms: string[]) {
+    const doc = documents.find((d) => d.id === source.documentId);
+    setPageView({
+      documentId: source.documentId,
+      documentName: source.documentName,
+      page: source.page,
+      pageCount: doc?.page_count ?? source.page,
+      highlight: bestSnippet(source.excerpt, terms, 320).replace(/^…|…$/g, ""),
+    });
+  }
+
+  function showFactPage(fact: Fact) {
+    if (!factsDoc) return;
+    setPageView({
+      documentId: factsDoc.id,
+      documentName: factsDoc.name,
+      page: fact.page,
+      pageCount: factsDoc.page_count,
+      highlight: fact.context,
+    });
   }
 
   function disconnectAi() {
@@ -231,8 +270,22 @@ export default function Home() {
       };
 
       try {
-        // 1. Search this browser's library (free, no key)
-        const sources = await findPassages(q, [...selected], ai ? SEARCH.topK : SEARCH.passagesWithoutAi);
+        // 1. Search this browser's library (free, no key). A question in Tamil, Hindi, etc. is
+        //    also searched as English keywords when an AI is connected, so English documents match.
+        const queries = [q];
+        if (ai && isNonLatin(q)) {
+          try {
+            const keywords = await completeText(ai, TRANSLATE_PROMPT, q, controller.signal);
+            if (keywords) {
+              queries.push(keywords);
+              updateAssistant(assistant.id, (m) => ({ ...m, searchQuery: keywords }));
+            }
+          } catch (err) {
+            if (controller.signal.aborted) throw err;
+            // Translation failed: carry on with the original question
+          }
+        }
+        const sources = await findPassages(queries, [...selected], ai ? SEARCH.topK : SEARCH.passagesWithoutAi);
         updateAssistant(assistant.id, (m) => ({ ...m, sources }));
 
         // 2. No AI connected, or nothing matched: show the passages themselves
@@ -355,13 +408,17 @@ export default function Home() {
         e.preventDefault();
         composerRef.current?.focus();
       } else if (e.key === "Escape") {
-        if (evidence) setEvidence(null);
+        // Close only the top-most window
+        if (pageView) setPageView(null);
+        else if (factsDoc) setFactsDoc(null);
+        else if (connectOpen) setConnectOpen(false);
+        else if (evidence) setEvidence(null);
         else if (libraryOpen) setLibraryOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [evidence, libraryOpen]);
+  }, [pageView, factsDoc, connectOpen, evidence, libraryOpen]);
 
   // ---------- Derived ----------
   const evidenceData = useMemo(() => {
@@ -374,7 +431,7 @@ export default function Home() {
     const prev = messages[index - 1];
     return {
       sources: sources.length ? sources : msg.sources,
-      terms: prev?.role === "user" ? keyTerms(prev.content) : [],
+      terms: keyTerms(`${prev?.role === "user" ? prev.content : ""} ${msg.searchQuery ?? ""}`),
     };
   }, [evidence, messages]);
 
@@ -403,6 +460,10 @@ export default function Home() {
       onToggle={toggle}
       onClearSelection={() => setSelected(new Set())}
       onDelete={removeDocument}
+      onShowFacts={(d) => {
+        setLibraryOpen(false);
+        setFactsDoc(d);
+      }}
       onPickFiles={() => fileInput.current?.click()}
       onDismissUpload={(id) => setUploads((u) => u.filter((x) => x.id !== id))}
       onRetryLoad={loadDocs}
@@ -511,6 +572,15 @@ export default function Home() {
                         {s}
                       </button>
                     ))}
+                    <button
+                      onClick={() =>
+                        setFactsDoc(documents.find((d) => selected.has(d.id)) ?? documents[0])
+                      }
+                      className="mt-2 flex items-center gap-2 text-[14px] font-medium text-action hover:underline"
+                    >
+                      <FactsIcon className="text-[16px]" />
+                      Or see the key dates, amounts and deadlines
+                    </button>
                   </div>
                 )}
               </div>
@@ -522,6 +592,7 @@ export default function Home() {
               onCite={(messageId, n) => setEvidence({ messageId, n })}
               onRetry={retry}
               onConnect={() => setConnectOpen(true)}
+              onViewPage={showSourcePage}
             />
           </div>
         </div>
@@ -569,6 +640,7 @@ export default function Home() {
               terms={evidenceData.terms}
               onSelect={(n) => setEvidence({ ...evidence, n })}
               onClose={() => setEvidence(null)}
+              onViewPage={(src) => showSourcePage(src, evidenceData.terms)}
             />
           </aside>
           <div className="fixed inset-0 z-40 xl:hidden" role="dialog" aria-modal="true" aria-label="Evidence">
@@ -582,6 +654,7 @@ export default function Home() {
                   terms={evidenceData.terms}
                   onSelect={(n) => setEvidence({ ...evidence, n })}
                   onClose={() => setEvidence(null)}
+                  onViewPage={(src) => showSourcePage(src, evidenceData.terms)}
                 />
               </div>
             </div>
@@ -598,6 +671,20 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {factsDoc && (
+        <KeyFacts
+          document={factsDoc}
+          onOpenPage={showFactPage}
+          onAsk={(question) => {
+            setFactsDoc(null);
+            ask(question, messages);
+          }}
+          onClose={() => setFactsDoc(null)}
+        />
+      )}
+
+      {pageView && <PageViewer {...pageView} onClose={() => setPageView(null)} />}
 
       {connectOpen && (
         <ConnectAI
